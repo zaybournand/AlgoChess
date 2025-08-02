@@ -1,4 +1,4 @@
-♟️ Chess AI Search Algorithm Comparison
+♟️ Chess Search Algorithm Comparison
 
 👥 Team Members:
 Mohamed Hussein
