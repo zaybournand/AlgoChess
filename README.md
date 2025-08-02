@@ -6,6 +6,7 @@ Zayne Bournand
 Dajana Seitllari
 
 🧠 Project Overview:
+
 This project compares two chess move selection algorithms:
 
 Fixed-Depth Minimax: Searches all positions to a fixed depth.
@@ -34,9 +35,13 @@ Project3/
 Python 3.8 or newer
 
 🔧 Clone & Install
-git clone https://github.com/zaybournand/Project3.git  
-cd Project3  
-pip install -r requirements.txt  
+
+git clone https://github.com/zaybournand/Project3.git
+
+cd Project3
+
+pip install -r requirements.txt
+
 ℹ️ All core code uses Python’s standard libraries. Requirements file is minimal.
 
 📁 Data Setup
@@ -52,29 +57,41 @@ Due to GitHub file size limits, the dataset is not included in the repository.
    Project3/archive/chessData.csv
 
 ▶️ Running the Simulation
+
 python3 src/main.py
+
 This will:
 
 Load positions from archive/chessData.csv (default: 1000 boards)
+
 Run both algorithms and compare move quality + runtime
+
 Save results to simulation_results.csv
+
 Output runtime stats to profile_results.prof
 
 ⚙️ Configuration Options
+
 In src/main.py, you can customize:
-NUM_BOARDS_TO_LOAD = 1000  
-FIXED_DEPTH = 3  
+
+NUM_BOARDS_TO_LOAD = 1000
+
+FIXED_DEPTH = 3
+
 SELECTIVE_DEPTH = 2
 
-📊 Analyzing Results
+📊 Analyzing Results:
+
 Simulation Output
 Open simulation_results.csv in Excel, Google Sheets, or analyze via Python (pandas, matplotlib, etc.)
 
 Profiling Report
+
 View performance stats:
+
 python3 -m pstats profile_results.prof
 
-📝 Notes
+📝 Notes:
+
 Multiprocessing is used to parallelize board evaluations for better performance.
 Dataset contains pre-evaluated chess board states with move suggestions and scores.
-This project is purely for academic exploration of AI search strategies in chess.
