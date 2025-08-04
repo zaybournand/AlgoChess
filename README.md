@@ -20,6 +20,7 @@ Project3/
 ├── archive/ # Data folder (not tracked by Git)  
 │ └── chessData.csv # Kaggle dataset (user must download)  
 ├── src/  
+│ ├── stockfish # Stockfish binary. (user must download)
 │ ├── board.py # ChessBoard class: rules & move generation  
 │ ├── evaluation.py # Static board evaluation  
 │ ├── main.py # Simulation runner & analyzer  
@@ -56,6 +57,13 @@ Due to GitHub file size limits, the dataset is not included in the repository.
 3. Place in Correct Directory
    Project3/archive/chessData.csv
 
+♟️Engine Setup
+Due to Github file size limits, the engine binary is not included in the repository. 
+
+1. Download stockfish binary for Ubuntu
+
+2. Extract the binary from the .tar file into the same directory as main.py
+
 ▶️ Running the Simulation
 
 python3 src/main.py
@@ -72,13 +80,7 @@ Output runtime stats to profile_results.prof
 
 ⚙️ Configuration Options
 
-In src/main.py, you can customize:
-
-NUM_BOARDS_TO_LOAD = 1000
-
-FIXED_DEPTH = 3
-
-SELECTIVE_DEPTH = 2
+As the script runs, you can specify the search depth (the same depth will be used for fixed search and further recursive quiscence search), the number of boards to load, and whether or not you want to run a naive minimax engine after to compare it to the minimax engine with alpha-beta pruning.
 
 📊 Analyzing Results:
 
@@ -90,6 +92,17 @@ Profiling Report
 View performance stats:
 
 python3 -m pstats profile_results.prof
+
+Visuals are available in:
+
+selective_comparision.png
+simulation_analysis.png
+ab_pruning_comparision.png
+
+These will be available in the directory you run in. It is best to run in the root directory using the command:
+
+python3 src/main.py
+
 
 📝 Notes:
 
