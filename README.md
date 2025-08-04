@@ -9,9 +9,11 @@ Dajana Seitllari
 
 This project compares two chess move selection algorithms:
 
-Fixed-Depth Minimax: Searches all positions to a fixed depth.
+Fixed-Depth Minimax with Alpha-Beta Pruning: Searches all positions to a fixed depth.
 
-Selective Deepening Minimax: Dynamically increases depth in unstable positions (captures/checks).
+Selective Deepening Minimax with Alpha-Beta Pruning: Dynamically increases depth in unstable positions (captures/checks).
+
+It futher compares Fixed-Depth Minimax with Alpha-Beta Pruning to a Naive Fixed-Depth Minimax Algorithm, on the basis of runtime and move quality (as judged by Stockfish Chess Engine)
 
 We simulate over 100,000 move evaluations using a public chess dataset to compare both move quality and runtime. The goal is to demonstrate that selective deepening yields stronger moves without a significant performance cost.
 
@@ -43,7 +45,7 @@ cd Project3
 
 pip install -r requirements.txt
 
-ℹ️ All core code uses Python’s standard libraries. Requirements file is minimal.
+ℹ️ Required modules include the python chess module, matplotlib for visualization, and others, all listed in requirements.txt
 
 📁 Data Setup
 Due to GitHub file size limits, the dataset is not included in the repository.
@@ -65,6 +67,9 @@ Due to Github file size limits, the engine binary is not included in the reposit
 2. Extract the binary from the .tar file into the same directory as main.py
 
 ▶️ Running the Simulation
+Navigate to root directory of the project
+
+Run:
 
 python3 src/main.py
 
@@ -81,6 +86,7 @@ Output runtime stats to profile_results.prof
 ⚙️ Configuration Options
 
 As the script runs, you can specify the search depth (the same depth will be used for fixed search and further recursive quiscence search), the number of boards to load, and whether or not you want to run a naive minimax engine after to compare it to the minimax engine with alpha-beta pruning.
+The program output has recommendations for what configurations you should use depending on how long you would like the run to take. 
 
 📊 Analyzing Results:
 
