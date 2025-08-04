@@ -1,66 +1,70 @@
-from time import time
-from board import generate_legal_moves, apply_move, is_terminal
+# selective.py
 
-# --- Node class for representing search tree ---
-class Node:
-    def __init__(self, board_state, current_move, depth, player_to_move):
-        self.board_state = board_state
-        self.current_move = current_move
-        self.depth = depth
-        self.player_to_move = player_to_move
+from board import apply_move, generate_legal_moves, is_capture_move
 
-# --- Selective deepening minimax with additional depth in unstable positions ---
-def selective_deepening_minimax(node, current_depth, max_overall_depth, evaluate_fn, is_unstable_fn):
-    if current_depth == max_overall_depth or is_terminal(node.board_state, node.player_to_move):
-        return evaluate_fn(node.board_state), node.current_move
+MATE_SCORE = 100000
+# The budget for how many captures deep the quiescence search will look.
+QUIESCENCE_DEPTH_BUDGET = 4 
 
-    maximizing_player = node.player_to_move == 1
-    best_score = float('-inf') if maximizing_player else float('inf')
+def find_best_move_selective(board_state, player_to_move, depth, evaluate_fn):
     best_move = None
+    best_score = -float('inf')
+    
+    alpha = -float('inf')
+    beta = float('inf')
 
-    moves = generate_legal_moves(node.board_state, node.player_to_move)
-    if not moves:
-        return evaluate_fn(node.board_state), node.current_move
+    moves = generate_legal_moves(board_state, player_to_move)
+    sorted_moves = sorted(moves, key=lambda move: is_capture_move(board_state, move), reverse=True)
 
-    for move in moves:
-        child_board_state, next_player_to_move = apply_move(node.board_state, move, node.player_to_move)
-        child_node = Node(child_board_state, move, node.depth + 1, next_player_to_move)
+    for move in sorted_moves:
+        child_board, next_player = apply_move(board_state, move, player_to_move)
+        score = -negamax_selective(child_board, next_player, depth - 1, -beta, -alpha, evaluate_fn)
 
-        # Increase depth if the position is unstable like check, capture, etc.
-        deeper_depth_for_child_call = current_depth + 1
-        if is_unstable_fn(child_node.board_state, child_node.player_to_move):
-            deeper_depth_for_child_call += 2
+        if score > best_score:
+            best_score = score
+            best_move = move
+        
+        alpha = max(alpha, score)
 
-        deeper_depth_for_child_call = min(deeper_depth_for_child_call, max_overall_depth)
+    return {"best_move": best_move, "score": best_score}
 
-        score, _ = selective_deepening_minimax(child_node, deeper_depth_for_child_call, max_overall_depth, evaluate_fn, is_unstable_fn)
+def negamax_selective(board, player_to_move, depth, alpha, beta, evaluate_fn):
+    legal_moves = generate_legal_moves(board, player_to_move)
+    if not legal_moves:
+        return -MATE_SCORE
 
-        if maximizing_player:
-            if score > best_score:
-                best_score = score
-                best_move = move
-        else:
-            if score < best_score:
-                best_score = score
-                best_move = move
+    if depth == 0:
+        return quiescence_search(board, player_to_move, QUIESCENCE_DEPTH_BUDGET, alpha, beta, evaluate_fn)
 
-    # Fallback in case no move is selected
-    if best_move is None and moves:
-        return best_score, moves[0]
-    elif best_move is None and not moves:
-        return evaluate_fn(node.board_state), node.current_move
+    for move in legal_moves:
+        child_board, next_player = apply_move(board, move, player_to_move)
+        score = -negamax_selective(child_board, next_player, depth - 1, -beta, -alpha, evaluate_fn)
 
-    return best_score, best_move
+        if score >= beta:
+            return beta
+        alpha = max(alpha, score)
+        
+    return alpha
 
-# Entry point to run selective deepening from a given board state
-def run_selective_deepening(start_board, player_to_move, max_overall_depth, evaluate_fn, is_unstable_fn):
-    root = Node(start_board, None, 0, player_to_move)
-    start_time = time()
-    score, best_move = selective_deepening_minimax(root, 0, max_overall_depth, evaluate_fn, is_unstable_fn)
-    end_time = time()
+def quiescence_search(board, player_to_move, depth, alpha, beta, evaluate_fn):
+    stand_pat_score = player_to_move * evaluate_fn(board)
+    
+    if depth == 0:
+        return stand_pat_score
 
-    return {
-        "best_move": best_move,
-        "score": score,
-        "runtime_sec": end_time - start_time
-    }
+    if stand_pat_score >= beta:
+        return beta
+        
+    alpha = max(alpha, stand_pat_score)
+
+    capture_moves = [move for move in generate_legal_moves(board, player_to_move) if is_capture_move(board, move)]
+
+    for move in capture_moves:
+        child_board, next_player = apply_move(board, move, player_to_move)
+        score = -quiescence_search(child_board, next_player, depth - 1, -beta, -alpha, evaluate_fn)
+
+        if score >= beta:
+            return beta
+        alpha = max(alpha, score)
+
+    return alpha
