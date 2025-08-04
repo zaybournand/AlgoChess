@@ -3,210 +3,254 @@
 import csv
 import os
 from time import time
-import cProfile
-import pstats
 from multiprocessing import Pool, cpu_count
-from board import fen_to_2d_board
-from evaluation import evaluate_board, is_unstable
-from minimax import run_fixed_minimax
-from selective import run_selective_deepening
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+import chess.engine
 
-# Configuration (free to change if wanted)
-NUM_BOARDS_TO_LOAD = 100
-FIXED_DEPTH = 3
-SELECTIVE_DEPTH = 3
+# --- Our project modules ---
+from board import fen_to_2d_board, apply_move
+from evaluation import evaluate_board, is_unstable
+from minimax import find_best_move_fixed_depth
+from selective import find_best_move_selective
+from minimax_naive import find_best_move_naive
+from arbiter import get_stockfish_evaluation, STOCKFISH_PATH
+
 DATASET_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'archive', 'chessData.csv')
 
-# Load FEN board states from CSV
+def get_user_config():
+    config = {}
+    print("--- Welcome to the Interactive Chess Engine Comparison Tool ---")
+    print("This tool will guide you through setting up a simulation.")
+
+    # 1. Get Number of Boards
+    print("\n[Step 1: Number of Boards to Test]")
+    print("Recommendation: Use 10 for a quick test, use 100 for robust analysis with a credible sample size")
+    while True:
+        try:
+            num = int(input("How many board positions would you like to load? "))
+            if num > 0:
+                config['num_boards'] = num
+                break
+            else:
+                print("Please enter a positive number.")
+        except ValueError:
+            print("Invalid input. Please enter a whole number.")
+
+    # 2. Get Search Depths
+    print("\n[Step 2: Search Depth for A/B and Selective Engines]")
+    print("Depth determines how many moves ahead the AI looks. Runtime grows exponentially with depth.")
+    print("Recommendation: Use Depth 2 for a very fast run, Depth 3 for a standard run (minutes), or Depth 4 for a long run (can be 30+ minutes).")
+    while True:
+        try:
+            depth = int(input("Enter the search depth (e.g., 3): "))
+            if depth > 0:
+                config['fixed_depth'] = depth
+                config['selective_depth'] = depth # Having both values be the same is the fairest comparision
+                break
+            else:
+                print("Please enter a positive number.")
+        except ValueError:
+            print("Invalid input. Please enter a whole number.")
+
+    print("\n[Step 3: Optional Naive Minimax Comparison]")
+    print("This will run an additional engine that doesn't use Alpha-Beta Pruning, as a comparision of algorithm performance.")
+    while True:
+        choice = input("Would you like to run this final comparison? (y/n): ").lower()
+        if choice in ['y', 'yes']:
+            config['run_naive'] = True
+            print("\n----------------------------------------------------------------")
+            print("!!! WARNING: Naive Minimax is VERY SLOW!")
+            print(f"At Depth {config['fixed_depth']}, this last stage can take many times longer than the first phase.")
+            if config['fixed_depth'] > 3:
+                print("A depth > 3 is NOT RECOMMENDED for the naive comparison.")
+            print("It is best to run with a small number of boards (e.g., 5-10).")
+            print("----------------------------------------------------------------")
+            break
+        elif choice in ['n', 'no']:
+            config['run_naive'] = False
+            break
+        else:
+            print("Invalid input. Please enter 'y' or 'n'.")
+    
+    print("\nConfiguration complete. Starting simulation...")
+    return config
+
 def load_boards_from_csv(file_path, num_boards_target):
     boards_data = []
     board_id_counter = 0
     print(f"Loading board states from {file_path}...")
-
     try:
         with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             for i, row in enumerate(reader):
-                if len(boards_data) >= num_boards_target:
-                    break
-
+                if len(boards_data) >= num_boards_target: break
                 fen_string = row['FEN']
-                current_board_2d = fen_to_2d_board(fen_string)
+                board_2d = fen_to_2d_board(fen_string)
                 player_char = fen_string.split(' ')[1]
                 player_to_move = 1 if player_char == 'w' else -1
-
                 boards_data.append({
-                    "board_id": board_id_counter,
-                    "board_state": current_board_2d,
-                    "player_to_move": player_to_move,
-                    "is_unstable": is_unstable(current_board_2d, player_to_move)
+                    "board_id": board_id_counter, "board_state": board_2d,
+                    "player_to_move": player_to_move, "is_unstable": is_unstable(board_2d, player_to_move)
                 })
                 board_id_counter += 1
-
-                if (i + 1) % 10 == 0:
-                    print(f"Loaded {i + 1} board states...")
-
-    except FileNotFoundError:
-        print(f"Error: Dataset file not found at {file_path}")
-        exit()
-    except KeyError as e:
-        print(f"Missing column in CSV: {e}")
-        exit()
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        exit()
-
+    except FileNotFoundError: print(f"Error: Dataset file not found at {file_path}"); exit()
     print(f"Finished loading {len(boards_data)} board states.")
     return boards_data
 
-# Run both algorithms on a single board
-def process_single_board_simulation(board_data, fixed_depth, selective_depth, evaluate_fn_param, is_unstable_fn_param):
-    board_id = board_data["board_id"]
+def get_engine_moves(board_data, fixed_depth_param, selective_depth_param, evaluate_fn_param):
     current_board = board_data["board_state"]
     player_to_move = board_data["player_to_move"]
-    is_unstable_pos = board_data["is_unstable"]
+    start_time_fixed = time()
+    fixed_result = find_best_move_fixed_depth(current_board, player_to_move, fixed_depth_param, evaluate_fn_param)
+    fixed_runtime = time() - start_time_fixed
+    start_time_selective = time()
+    selective_result = find_best_move_selective(current_board, player_to_move, selective_depth_param, evaluate_fn_param)
+    selective_runtime = time() - start_time_selective
+    board_data.update({
+        "fixed_best_move": fixed_result["best_move"], "fixed_runtime": fixed_runtime,
+        "selective_best_move": selective_result["best_move"], "selective_runtime": selective_runtime
+    })
+    return board_data
 
-    fixed_result = run_fixed_minimax(current_board, player_to_move, fixed_depth, evaluate_fn_param)
-    selective_result = run_selective_deepening(current_board, player_to_move, selective_depth, evaluate_fn_param, is_unstable_fn_param)
+def get_naive_move(board_data, fixed_depth_param, evaluate_fn_param):
+    current_board = board_data["board_state"]
+    player_to_move = board_data["player_to_move"]
+    start_time_naive = time()
+    naive_result = find_best_move_naive(current_board, player_to_move, fixed_depth_param, evaluate_fn_param)
+    naive_runtime = time() - start_time_naive
+    board_data.update({
+        "naive_best_move": naive_result["best_move"], "naive_runtime": naive_runtime
+    })
+    return board_data
 
-    return {
-        "board_id": board_id,
-        "player_to_move": player_to_move,
-        "is_unstable_pos": is_unstable_pos,
-        "fixed_best_move": fixed_result["best_move"],
-        "fixed_score": fixed_result["score"],
-        "fixed_runtime_sec": fixed_result["runtime_sec"],
-        "selective_best_move": selective_result["best_move"],
-        "selective_score": selective_result["score"],
-        "selective_runtime_sec": selective_result["runtime_sec"]
-    }
-
-# Parallel simulation for all boards
-def run_simulations(boards_data, fixed_depth, selective_depth):
-    print(f"\nRunning simulations for {len(boards_data)} boards using {cpu_count()} CPU cores...")
-    start_all_sims_time = time()
-
-    num_cores = cpu_count() or 1
-    simulation_args = [
-        (board_data, fixed_depth, selective_depth, evaluate_board, is_unstable)
-        for board_data in boards_data
-    ]
-
-    results = []
-    with Pool(processes=num_cores) as pool:
-        for i, res in enumerate(pool.starmap(process_single_board_simulation, simulation_args)):
-            results.append(res)
-            if (i + 1) % (len(boards_data) // 10 if len(boards_data) > 100 else 10) == 0:
-                print(f"Processed {i + 1} boards...")
-            elif (i + 1) == len(boards_data):
-                print(f"Processed {i + 1} boards (all done).")
-
-    print(f"Finished all simulations in {time() - start_all_sims_time:.2f} seconds.")
+def run_simulations_parallel(worker_fn, boards_data, phase_name, *args):
+    print(f"\n{phase_name}: Running on {len(boards_data)} boards using {cpu_count()} CPU cores...")
+    start_time = time()
+    simulation_args = [(d, *args) for d in boards_data]
+    with Pool(processes=cpu_count()) as pool:
+        results = pool.starmap(worker_fn, simulation_args)
+    print(f"{phase_name} complete in {time() - start_time:.2f} seconds.")
     return results
 
-# Analyze comparison between the two algorithms
-def analyze_results(results):
-    total_fixed_runtime = sum(r["fixed_runtime_sec"] for r in results)
-    total_selective_runtime = sum(r["selective_runtime_sec"] for r in results)
-
-    print("\n--- Simulation Summary ---")
-    print(f"Total Boards Simulated: {len(results)}")
-    print(f"Total Fixed-Depth Minimax Runtime: {total_fixed_runtime:.4f} seconds")
-    print(f"Total Selective Deepening Minimax Runtime: {total_selective_runtime:.4f} seconds")
-    print(f"Average Fixed-Depth Runtime: {total_fixed_runtime / len(results):.6f} sec")
-    print(f"Average Selective Runtime: {total_selective_runtime / len(results):.6f} sec")
-
-    fixed_better_count = 0
-    selective_better_count = 0
-    draw_score_count = 0
-    selective_better_in_unstable = 0
-    unstable_pos_count = 0
-
-    for r in results:
-        fixed_score = r["fixed_score"]
-        selective_score = r["selective_score"]
-        is_unstable_pos = r["is_unstable_pos"]
-
-        if is_unstable_pos:
-            unstable_pos_count += 1
-
-        if r["player_to_move"] == 1:
-            if selective_score > fixed_score:
-                selective_better_count += 1
-                if is_unstable_pos:
-                    selective_better_in_unstable += 1
-            elif fixed_score > selective_score:
-                fixed_better_count += 1
-            else:
-                draw_score_count += 1
-        else:
-            if selective_score < fixed_score:
-                selective_better_count += 1
-                if is_unstable_pos:
-                    selective_better_in_unstable += 1
-            elif fixed_score < selective_score:
-                fixed_better_count += 1
-            else:
-                draw_score_count += 1
-
-    print("\n--- Move Quality Comparison ---")
-    print(f"Selective better: {selective_better_count}")
-    print(f"Fixed better: {fixed_better_count}")
-    print(f"Equal: {draw_score_count}")
-
-    print(f"\n--- Unstable Position Analysis ---")
-    print(f"Unstable positions: {unstable_pos_count}")
-    if unstable_pos_count:
-        print(f"Selective better in unstable: {selective_better_in_unstable} ({selective_better_in_unstable / unstable_pos_count:.2%})")
-    else:
-        print("No unstable positions analyzed.")
-
-# Final results to CSV
-def save_results_to_csv(results, filename="simulation_results.csv"):
-    if not results:
-        print("No results to save.")
-        return
-
-    ordered_keys = [
-        "board_id", "player_to_move", "is_unstable_pos",
-        "fixed_best_move", "fixed_score", "fixed_runtime_sec",
-        "selective_best_move", "selective_score", "selective_runtime_sec"
-    ]
-
-    with open(filename, 'w', newline='') as output_file:
-        dict_writer = csv.DictWriter(output_file, fieldnames=ordered_keys)
-        dict_writer.writeheader()
-        dict_writer.writerows(results)
-
-    print(f"\nResults saved to {filename}")
-
-# --- Main execution ---
-if __name__ == "__main__":
-    print("Starting chess Algo simulation project...")
-
-    profiler = cProfile.Profile()
-    profiler.enable()
-
+def judge_all_moves_with_stockfish(results):
+    print(f"\nJudging {len(results)} results with a persistent Stockfish engine...")
+    start_time = time()
+    engine = None
     try:
-        print("Step 1: Loading board positions...")
-        boards_for_sim = load_boards_from_csv(DATASET_PATH, NUM_BOARDS_TO_LOAD)
-
-        print("Step 2: Running simulations...")
-        simulation_results = run_simulations(boards_for_sim, FIXED_DEPTH, SELECTIVE_DEPTH)
-
-        print("Step 3: Analyzing results...")
-        analyze_results(simulation_results)
-
-        save_results_to_csv(simulation_results)
-
+        engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+        for i, r in enumerate(results):
+            if r.get("fixed_best_move"):
+                board, next_player = apply_move(r["board_state"], r["fixed_best_move"], r["player_to_move"])
+                r["fixed_true_score"] = get_stockfish_evaluation(board, next_player, engine)
+            if r.get("selective_best_move"):
+                board, next_player = apply_move(r["board_state"], r["selective_best_move"], r["player_to_move"])
+                r["selective_true_score"] = get_stockfish_evaluation(board, next_player, engine)
+            if r.get("naive_best_move"):
+                board, next_player = apply_move(r["board_state"], r["naive_best_move"], r["player_to_move"])
+                r["naive_true_score"] = get_stockfish_evaluation(board, next_player, engine)
+            if (i + 1) % 10 == 0: print(f"  Judged {i + 1}/{len(results)} positions...")
+    except chess.engine.EngineTerminatedError as e: print(f"\nFATAL ERROR: Stockfish terminated. {e}")
     finally:
-        profiler.disable()
-        stats_filename = "profile_results.prof"
-        profiler.dump_stats(stats_filename)
-        print(f"\nProfiling data saved to {stats_filename}")
-        print("\n--- Top 20 Cumulative Time Functions ---")
-        stats = pstats.Stats(profiler)
-        stats.sort_stats('cumtime')
-        stats.print_stats(20)
+        if engine: engine.quit()
+    print(f"Judging complete in {time() - start_time:.2f} seconds.")
+    return results
 
-    print("\n--- Simulation Complete ---")
+def visualize_selective_comparison(results):
+    print("\nCreating Selective vs. Fixed A/B comparison plot...")
+    if not results: return
+    quality_stable = {'fixed': 0, 'selective': 0, 'equal': 0}
+    quality_unstable = {'fixed': 0, 'selective': 0, 'equal': 0}
+    for r in results:
+        is_unstable_pos = r.get("is_unstable", False)
+        fixed_score = r.get("fixed_true_score", 0)
+        selective_score = r.get("selective_true_score", 0)
+        if r.get("player_to_move") == 1:
+            if selective_score > fixed_score: winner = 'selective'
+            elif fixed_score > selective_score: winner = 'fixed'
+            else: winner = 'equal'
+        else:
+            if selective_score < fixed_score: winner = 'selective'
+            elif fixed_score < selective_score: winner = 'fixed'
+            else: winner = 'equal'
+        if is_unstable_pos: quality_unstable[winner] += 1
+        else: quality_stable[winner] += 1
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    fig.suptitle('Fixed A/B vs. Selective/Quiescent Search (Judged by Stockfish)', fontsize=16)
+    total_quality = {'Fixed A/B Better': quality_stable['fixed'] + quality_unstable['fixed'], 'Selective Better': quality_stable['selective'] + quality_unstable['selective'], 'Equal Score': quality_stable['equal'] + quality_unstable['equal']}
+    axes[0].bar(total_quality.keys(), total_quality.values(), color=['coral', 'teal', 'grey'])
+    axes[0].set_ylabel('Number of Boards')
+    axes[0].set_title('Overall Move Quality')
+    labels = ['Selective Better', 'Fixed A/B Better', 'Equal Score']
+    stable_counts = [quality_stable['selective'], quality_stable['fixed'], quality_stable['equal']]
+    unstable_counts = [quality_unstable['selective'], quality_unstable['fixed'], quality_unstable['equal']]
+    x = np.arange(len(labels))
+    width = 0.35
+    axes[1].bar(x - width/2, stable_counts, width, label='Stable Positions', color='coral')
+    axes[1].bar(x + width/2, unstable_counts, width, label='Unstable Positions', color='teal')
+    axes[1].set_ylabel('Number of Boards')
+    axes[1].set_title('Move Quality by Position Stability')
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(labels)
+    axes[1].legend()
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig('selective_comparison.png')
+    print("Selective comparison analysis saved to selective_comparison.png")
+
+def visualize_ab_comparison(results):
+    print("\nCreating Alpha-Beta Pruning comparison plot...")
+    total_fixed_runtime = sum(r.get("fixed_runtime", 0) for r in results)
+    total_naive_runtime = sum(r.get("naive_runtime", 0) for r in results)
+    quality = {'ab_better': 0, 'naive_better': 0, 'equal': 0}
+    for r in results:
+        if r.get("player_to_move") == 1:
+            if r.get("fixed_true_score", 0) > r.get("naive_true_score", 0): quality['ab_better'] += 1
+            elif r.get("naive_true_score", 0) > r.get("fixed_true_score", 0): quality['naive_better'] += 1
+            else: quality['equal'] += 1
+        else:
+            if r.get("fixed_true_score", 0) < r.get("naive_true_score", 0): quality['ab_better'] += 1
+            elif r.get("naive_true_score", 0) < r.get("fixed_true_score", 0): quality['naive_better'] += 1
+            else: quality['equal'] += 1
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    fig.suptitle('Alpha-Beta Pruning vs. Naive Minimax Performance', fontsize=16)
+    axes[0].bar(['A/B Pruning', 'Naive Minimax'], [total_fixed_runtime, total_naive_runtime], color=['dodgerblue', 'orangered'])
+    axes[0].set_ylabel('Total Runtime (seconds)')
+    axes[0].set_title('Log Scale Runtime Comparison (Lower is Better)')
+    axes[0].set_yscale('log')
+    labels = ['A/B Finds Same Move', 'A/B Finds Better Move', 'Naive Finds Better Move']
+    counts = [quality['equal'], quality['ab_better'], quality['naive_better']]
+    axes[1].bar(labels, counts, color=['limegreen', 'green', 'darkred'])
+    axes[1].set_ylabel('Number of Boards')
+    axes[1].set_title('Move Quality Comparison')
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig('ab_pruning_comparison.png')
+    print("Pruning comparison analysis saved to ab_pruning_comparison.png")
+
+if __name__ == "__main__":
+    start_total_time = time()
+    config = get_user_config()
+    
+    try:
+        boards_for_sim = load_boards_from_csv(DATASET_PATH, config['num_boards'])
+        if boards_for_sim:
+            results_phase1 = run_simulations_parallel(get_engine_moves, boards_for_sim, "Phase 1 (Selective & Fixed A/B)", config['fixed_depth'], config['selective_depth'], evaluate_board)
+            judged_results1 = judge_all_moves_with_stockfish(results_phase1)
+            if judged_results1:
+                visualize_selective_comparison(judged_results1)
+
+            if config['run_naive']:
+                print("\n---\nWARNING: Starting Phase 3. This will be significantly slower.")
+                print("Running Minimax WITHOUT Alpha-Beta Pruning...")
+                results_phase3 = run_simulations_parallel(get_naive_move, judged_results1, "Phase 3 (Naive Minimax)", config['fixed_depth'], evaluate_board)
+                final_results = judge_all_moves_with_stockfish(results_phase3)
+                if final_results:
+                    visualize_ab_comparison(final_results)
+
+    except Exception as e:
+        print(f"\nAn unexpected error occurred during the main execution: {e}")
+    finally:
+        total_runtime = time() - start_total_time
+        print(f"\nTotal wall-clock time for entire script: {total_runtime:.2f} seconds.")
+        print("--- Simulation Complete ---")
