@@ -1,11 +1,14 @@
 # evaluation.py
 
 from board import get_piece_color, WHITE_PIECES, BLACK_PIECES, EMPTY, is_capture_move, generate_legal_moves, is_king_in_check
+
+# Assign static material values to pieces (positive for white, negative for black)
 PIECE_VALUES = {
     'P': 100, 'N': 300, 'B': 300, 'R': 500, 'Q': 900, 'K': 0,
     'p': -100, 'n': -300, 'b': -300, 'r': -500, 'q': -900, 'k': 0
 }
 
+# Evaluate board by summing material values
 def evaluate_board(board_state):
     score = 0
     for r in range(8):
@@ -15,24 +18,25 @@ def evaluate_board(board_state):
                 score += PIECE_VALUES.get(piece, 0) 
     return score
 
+# Check if the board state is unstable (in check or under threat)
 def is_unstable(board_state, player_to_move):
     current_player_color_str = 'white' if player_to_move == 1 else 'black'
-    
+
+    # In check = unstable
     if is_king_in_check(board_state, current_player_color_str):
         return True
-
+    
+    # If current player has a capture move = unstable
     moves = generate_legal_moves(board_state, player_to_move)
     for move in moves:
         if is_capture_move(board_state, move):
             return True
 
     opponent_player_to_move = -player_to_move
-    opponent_color_str = 'white' if opponent_player_to_move == 1 else 'black'
-
     opponent_moves = generate_legal_moves(board_state, opponent_player_to_move)
     for move in opponent_moves:
         if is_capture_move(board_state, move):
-            from_pos, to_pos = move
+            _, to_pos = move
             captured_piece = board_state[to_pos[0]][to_pos[1]]
             if get_piece_color(captured_piece) == current_player_color_str:
                 return True
