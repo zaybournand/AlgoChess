@@ -5,6 +5,9 @@ Mohamed Hussein
 Zayne Bournand
 Dajana Seitllari
 
+📽️ Project Demo Video:
+Watch our 5-minute demo here: [https://youtu.be/VMxQ0dJ5iD0]()
+
 🧠 Project Overview:
 
 This project compares two chess move selection algorithms:
@@ -60,7 +63,7 @@ Due to GitHub file size limits, the dataset is not included in the repository.
    Project3/archive/chessData.csv
 
 ♟️Engine Setup
-Due to Github file size limits, the engine binary is not included in the repository. 
+Due to Github file size limits, the engine binary is not included in the repository.
 
 1. Download stockfish binary for Ubuntu
 
@@ -86,7 +89,7 @@ Output runtime stats to profile_results.prof
 ⚙️ Configuration Options
 
 As the script runs, you can specify the search depth (the same depth will be used for fixed search and further recursive quiscence search), the number of boards to load, and whether or not you want to run a naive minimax engine after to compare it to the minimax engine with alpha-beta pruning.
-The program output has recommendations for what configurations you should use depending on how long you would like the run to take. 
+The program output has recommendations for what configurations you should use depending on how long you would like the run to take.
 
 📊 Analyzing Results:
 
@@ -108,7 +111,6 @@ ab_pruning_comparision.png
 These will be available in the directory you run in. It is best to run in the root directory using the command:
 
 python3 src/main.py
-
 
 📝 Notes:
 
