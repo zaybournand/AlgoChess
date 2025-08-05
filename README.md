@@ -6,7 +6,8 @@ Zayne Bournand
 Dajana Seitllari
 
 📽️ Project Demo Video:
-Watch our 5-minute demo here: [https://youtu.be/VMxQ0dJ5iD0]()
+
+Watch our 5-minute demo here: [YouTube Demo](https://youtu.be/VMxQ0dJ5iD0)
 
 🧠 Project Overview:
 
