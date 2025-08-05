@@ -1,10 +1,13 @@
 # main.py
+# Main orchestrator for runing and comparing the engines
+# It handles user interaction, simulation phases, judging, and data visualization.
 
 import csv
 import os
 from time import time
 from multiprocessing import Pool, cpu_count
 import matplotlib
+# We use a noninteractive backend for matplotlib to avoid GUI issues in headless environments.
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,14 +21,23 @@ from selective import find_best_move_selective
 from minimax_naive import find_best_move_naive
 from arbiter import get_stockfish_evaluation, STOCKFISH_PATH
 
+# --- CONSTANTS ---
+# Path to the chess positions dataset.
 DATASET_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'archive', 'chessData.csv')
 
 def get_user_config():
+    """
+    Interactively prompts the user for simulation settings.
+    This function guides the user through configuring the run without needing to edit the code.
+
+    Returns:
+        dict: A dictionary containing the user's choices for the simulation.
+    """
     config = {}
     print("--- Welcome to the Interactive Chess Engine Comparison Tool ---")
     print("This tool will guide you through setting up a simulation.")
 
-    # 1. Get Number of Boards
+    # Get number of boards to test from the user.
     print("\n[Step 1: Number of Boards to Test]")
     print("Recommendation: Use 10 for a quick test, use 100 for robust analysis with a credible sample size")
     while True:
@@ -39,7 +51,7 @@ def get_user_config():
         except ValueError:
             print("Invalid input. Please enter a whole number.")
 
-    # 2. Get Search Depths
+    # Get the search depth for the engines from user
     print("\n[Step 2: Search Depth for A/B and Selective Engines]")
     print("Depth determines how many moves ahead the AI looks. Runtime grows exponentially with depth.")
     print("Recommendation: Use Depth 2 for a very fast run, Depth 3 for a standard run (minutes), or Depth 4 for a long run (can be 30+ minutes).")
@@ -48,13 +60,14 @@ def get_user_config():
             depth = int(input("Enter the search depth (e.g., 3): "))
             if depth > 0:
                 config['fixed_depth'] = depth
-                config['selective_depth'] = depth # Having both values be the same is the fairest comparision
+                config['selective_depth'] = depth # Keep depths the same for a fair comparison.
                 break
             else:
                 print("Please enter a positive number.")
         except ValueError:
             print("Invalid input. Please enter a whole number.")
 
+    # Ask user if they want to run the naive minimax comparison.
     print("\n[Step 3: Optional Naive Minimax Comparison]")
     print("This will run an additional engine that doesn't use Alpha-Beta Pruning, as a comparision of algorithm performance.")
     while True:
@@ -74,11 +87,21 @@ def get_user_config():
             break
         else:
             print("Invalid input. Please enter 'y' or 'n'.")
-    
+
     print("\nConfiguration complete. Starting simulation...")
     return config
 
 def load_boards_from_csv(file_path, num_boards_target):
+    """
+    Loads chess board positions from a CSV file.
+
+    Args:
+        file_path (str): The path to the chessData.csv file.
+        num_boards_target (int): The number of boards to load from the file.
+
+    Returns:
+        list: A list of dictionaries, where each dictionary represents a board state.
+    """
     boards_data = []
     board_id_counter = 0
     print(f"Loading board states from {file_path}...")
@@ -87,28 +110,54 @@ def load_boards_from_csv(file_path, num_boards_target):
             reader = csv.DictReader(csvfile)
             for i, row in enumerate(reader):
                 if len(boards_data) >= num_boards_target: break
+                
+                # Parse the FEN string to get board layout and player to move.
                 fen_string = row['FEN']
                 board_2d = fen_to_2d_board(fen_string)
                 player_char = fen_string.split(' ')[1]
-                player_to_move = 1 if player_char == 'w' else -1
+                player_to_move = 1 if player_char == 'w' else -1 # 1 for White, -1 for Black
+
+                # Store the board data along with an initial stability check.
                 boards_data.append({
-                    "board_id": board_id_counter, "board_state": board_2d,
-                    "player_to_move": player_to_move, "is_unstable": is_unstable(board_2d, player_to_move)
+                    "board_id": board_id_counter,
+                    "board_state": board_2d,
+                    "player_to_move": player_to_move,
+                    "is_unstable": is_unstable(board_2d, player_to_move) # Check stability once at the start.
                 })
                 board_id_counter += 1
-    except FileNotFoundError: print(f"Error: Dataset file not found at {file_path}"); exit()
+    except FileNotFoundError:
+        print(f"Error: Dataset file not found at {file_path}"); exit()
     print(f"Finished loading {len(boards_data)} board states.")
     return boards_data
 
 def get_engine_moves(board_data, fixed_depth_param, selective_depth_param, evaluate_fn_param):
+    """
+    A worker function for the multiprocessing pool.
+    It runs the two primary engines (Fixed A/B and Selective) on a single board.
+
+    Args:
+        board_data (dict): The dictionary representing a single board state.
+        fixed_depth_param (int): The search depth for the fixed-depth engine.
+        selective_depth_param (int): The search depth for the selective engine.
+        evaluate_fn_param (function): The board evaluation function to use.
+
+    Returns:
+        dict: The updated board_data dictionary with the results.
+    """
     current_board = board_data["board_state"]
     player_to_move = board_data["player_to_move"]
+    
+    # Timing and running the fixed-depth A/B pruning engine.
     start_time_fixed = time()
     fixed_result = find_best_move_fixed_depth(current_board, player_to_move, fixed_depth_param, evaluate_fn_param)
     fixed_runtime = time() - start_time_fixed
+
+    # Timing and running the selective search engine.
     start_time_selective = time()
     selective_result = find_best_move_selective(current_board, player_to_move, selective_depth_param, evaluate_fn_param)
     selective_runtime = time() - start_time_selective
+
+    # Update the dictionary with the moves and runtimes.
     board_data.update({
         "fixed_best_move": fixed_result["best_move"], "fixed_runtime": fixed_runtime,
         "selective_best_move": selective_result["best_move"], "selective_runtime": selective_runtime
@@ -116,73 +165,133 @@ def get_engine_moves(board_data, fixed_depth_param, selective_depth_param, evalu
     return board_data
 
 def get_naive_move(board_data, fixed_depth_param, evaluate_fn_param):
+    """
+    A worker function for the optional Phase 3.
+    It runs the naive minimax engine (no pruning) on a single board.
+
+    Args:
+        board_data (dict): The dictionary representing a single board state.
+        fixed_depth_param (int): The search depth for the naive engine.
+        evaluate_fn_param (function): The board evaluation function to use.
+
+    Returns:
+        dict: The updated board_data dictionary with the naive engine's results.
+    """
     current_board = board_data["board_state"]
     player_to_move = board_data["player_to_move"]
+    
+    # Time and run the naive minimax engine.
     start_time_naive = time()
     naive_result = find_best_move_naive(current_board, player_to_move, fixed_depth_param, evaluate_fn_param)
     naive_runtime = time() - start_time_naive
+
+    # Update the dictionary with the move and runtime.
     board_data.update({
         "naive_best_move": naive_result["best_move"], "naive_runtime": naive_runtime
     })
     return board_data
 
 def run_simulations_parallel(worker_fn, boards_data, phase_name, *args):
+    """
+    A generic helper function to run any worker function in parallel.
+
+    Args:
+        worker_fn (function): The function to be run by each process (e.g., get_engine_moves).
+        boards_data (list): The list of boards to process.
+        phase_name (str): A descriptive name for the phase for printing.
+        *args: Additional arguments to be passed to the worker function.
+    """
     print(f"\n{phase_name}: Running on {len(boards_data)} boards using {cpu_count()} CPU cores...")
     start_time = time()
+    # Prepare arguments for each task in the pool.
     simulation_args = [(d, *args) for d in boards_data]
+    # Use multiprocessing.Pool to distribute the work across CPU cores.
     with Pool(processes=cpu_count()) as pool:
         results = pool.starmap(worker_fn, simulation_args)
     print(f"{phase_name} complete in {time() - start_time:.2f} seconds.")
     return results
 
 def judge_all_moves_with_stockfish(results):
+    """
+    Uses the Stockfish engine to objectively evaluate the moves chosen by our custom engines.
+    This runs sequentially, using one persistent Stockfish instance for memory safety and stability.
+    """
     print(f"\nJudging {len(results)} results with a persistent Stockfish engine...")
     start_time = time()
     engine = None
     try:
+        # Start the Stockfish engine process just once.
         engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+        
+        # Iterate through each result and get a "true score" from Stockfish.
         for i, r in enumerate(results):
+            # Judge the move from the fixed-depth A/B engine.
             if r.get("fixed_best_move"):
                 board, next_player = apply_move(r["board_state"], r["fixed_best_move"], r["player_to_move"])
                 r["fixed_true_score"] = get_stockfish_evaluation(board, next_player, engine)
+            
+            # Judge the move from the selective search engine.
             if r.get("selective_best_move"):
                 board, next_player = apply_move(r["board_state"], r["selective_best_move"], r["player_to_move"])
                 r["selective_true_score"] = get_stockfish_evaluation(board, next_player, engine)
+            
+            # If the naive move exists, judge it as well.
             if r.get("naive_best_move"):
                 board, next_player = apply_move(r["board_state"], r["naive_best_move"], r["player_to_move"])
                 r["naive_true_score"] = get_stockfish_evaluation(board, next_player, engine)
+            
+            # Provide a progress update to the user.
             if (i + 1) % 10 == 0: print(f"  Judged {i + 1}/{len(results)} positions...")
-    except chess.engine.EngineTerminatedError as e: print(f"\nFATAL ERROR: Stockfish terminated. {e}")
+    
+    except chess.engine.EngineTerminatedError as e:
+        print(f"\nFATAL ERROR: Stockfish terminated. {e}")
     finally:
+        # Ensure the Stockfish process is always closed, even if errors occur.
         if engine: engine.quit()
+        
     print(f"Judging complete in {time() - start_time:.2f} seconds.")
     return results
 
 def visualize_selective_comparison(results):
+    """
+    Creates and saves a plot comparing the Fixed A/B engine vs. the Selective engine.
+    """
     print("\nCreating Selective vs. Fixed A/B comparison plot...")
     if not results: return
+
+    # Prepare data for plotting by counting how often each engine was better.
     quality_stable = {'fixed': 0, 'selective': 0, 'equal': 0}
     quality_unstable = {'fixed': 0, 'selective': 0, 'equal': 0}
     for r in results:
         is_unstable_pos = r.get("is_unstable", False)
         fixed_score = r.get("fixed_true_score", 0)
         selective_score = r.get("selective_true_score", 0)
-        if r.get("player_to_move") == 1:
+        
+        # Determine the winner based on the player's perspective.
+        if r.get("player_to_move") == 1: # White wants a higher score.
             if selective_score > fixed_score: winner = 'selective'
             elif fixed_score > selective_score: winner = 'fixed'
             else: winner = 'equal'
-        else:
+        else: # Black wants a lower score.
             if selective_score < fixed_score: winner = 'selective'
             elif fixed_score < selective_score: winner = 'fixed'
             else: winner = 'equal'
+            
+        # Categorize the result based on the initial position's stability.
         if is_unstable_pos: quality_unstable[winner] += 1
         else: quality_stable[winner] += 1
+            
+    # Create the plots.
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
     fig.suptitle('Fixed A/B vs. Selective/Quiescent Search (Judged by Stockfish)', fontsize=16)
+
+    # Plotting Overall move quality.
     total_quality = {'Fixed A/B Better': quality_stable['fixed'] + quality_unstable['fixed'], 'Selective Better': quality_stable['selective'] + quality_unstable['selective'], 'Equal Score': quality_stable['equal'] + quality_unstable['equal']}
     axes[0].bar(total_quality.keys(), total_quality.values(), color=['coral', 'teal', 'grey'])
     axes[0].set_ylabel('Number of Boards')
     axes[0].set_title('Overall Move Quality')
+
+    # Plotting Move quality broken down by stability.
     labels = ['Selective Better', 'Fixed A/B Better', 'Equal Score']
     stable_counts = [quality_stable['selective'], quality_stable['fixed'], quality_stable['equal']]
     unstable_counts = [quality_unstable['selective'], quality_unstable['fixed'], quality_unstable['equal']]
@@ -195,14 +304,22 @@ def visualize_selective_comparison(results):
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(labels)
     axes[1].legend()
+
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.savefig('selective_comparison.png')
     print("Selective comparison analysis saved to selective_comparison.png")
 
 def visualize_ab_comparison(results):
+    """
+    Creates and saves a plot comparing the A/B Pruning engine vs. the Naive engine.
+    """
     print("\nCreating Alpha-Beta Pruning comparison plot...")
+    
+    # Sum the runtimes for each engine across all boards.
     total_fixed_runtime = sum(r.get("fixed_runtime", 0) for r in results)
     total_naive_runtime = sum(r.get("naive_runtime", 0) for r in results)
+    
+    # Compare move quality (should be identical).
     quality = {'ab_better': 0, 'naive_better': 0, 'equal': 0}
     for r in results:
         if r.get("player_to_move") == 1:
@@ -213,44 +330,67 @@ def visualize_ab_comparison(results):
             if r.get("fixed_true_score", 0) < r.get("naive_true_score", 0): quality['ab_better'] += 1
             elif r.get("naive_true_score", 0) < r.get("fixed_true_score", 0): quality['naive_better'] += 1
             else: quality['equal'] += 1
+
+    # Create the plots.
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
     fig.suptitle('Alpha-Beta Pruning vs. Naive Minimax Performance', fontsize=16)
+
+    # Plot Runtime comparison.
     axes[0].bar(['A/B Pruning', 'Naive Minimax'], [total_fixed_runtime, total_naive_runtime], color=['dodgerblue', 'orangered'])
     axes[0].set_ylabel('Total Runtime (seconds)')
     axes[0].set_title('Log Scale Runtime Comparison (Lower is Better)')
+    # Use a logarithmic scale because the runtime difference is expected to be enormous
     axes[0].set_yscale('log')
+
+    # Plot Move quality comparison.
     labels = ['A/B Finds Same Move', 'A/B Finds Better Move', 'Naive Finds Better Move']
     counts = [quality['equal'], quality['ab_better'], quality['naive_better']]
     axes[1].bar(labels, counts, color=['limegreen', 'green', 'darkred'])
     axes[1].set_ylabel('Number of Boards')
     axes[1].set_title('Move Quality Comparison')
+    
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.savefig('ab_pruning_comparison.png')
     print("Pruning comparison analysis saved to ab_pruning_comparison.png")
 
+# Main loop
 if __name__ == "__main__":
     start_total_time = time()
+    # Get all simulation settings from the user interactively
     config = get_user_config()
-    
+
     try:
+        # Step 1: Load the specified number of boards from the dataset.
         boards_for_sim = load_boards_from_csv(DATASET_PATH, config['num_boards'])
+        
         if boards_for_sim:
+            # Phase 1: Run the two primary engines (Fixed A/B, Selective) in parallel.
             results_phase1 = run_simulations_parallel(get_engine_moves, boards_for_sim, "Phase 1 (Selective & Fixed A/B)", config['fixed_depth'], config['selective_depth'], evaluate_board)
+            
+            # Phase 2: Judge the results from Phase 1 using Stockfish.
             judged_results1 = judge_all_moves_with_stockfish(results_phase1)
+            
+            # Create the first visualization based on the Phase 1/2 results.
             if judged_results1:
                 visualize_selective_comparison(judged_results1)
 
+            # Conditionally run the optional Phase 3 if the user selected 'y'.
             if config['run_naive']:
-                print("\n---\nWARNING: Starting Phase 3. This will be significantly slower.")
-                print("Running Minimax WITHOUT Alpha-Beta Pruning...")
+                # Phase 3: Run the extremely slow naive minimax engine.
                 results_phase3 = run_simulations_parallel(get_naive_move, judged_results1, "Phase 3 (Naive Minimax)", config['fixed_depth'], evaluate_board)
+                
+                # Re-judge all results, now including the naive engine's move.
                 final_results = judge_all_moves_with_stockfish(results_phase3)
+                
+                # Create the second visualization comparing A/B pruning to the naive approach.
                 if final_results:
                     visualize_ab_comparison(final_results)
 
     except Exception as e:
+        # Graceful handling of exceptions
         print(f"\nAn unexpected error occurred during the main execution: {e}")
     finally:
+        # Printing total run time and simulation completion 
         total_runtime = time() - start_total_time
         print(f"\nTotal wall-clock time for entire script: {total_runtime:.2f} seconds.")
         print("--- Simulation Complete ---")
